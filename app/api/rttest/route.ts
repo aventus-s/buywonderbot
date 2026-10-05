@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// TEMPORARY: raw KV inspection. Delete after diagnosing.
+// TEMPORARY: large-value SET/GET test. Delete after diagnosing.
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
@@ -13,25 +13,38 @@ export async function GET(req: Request) {
   const H = { Authorization: `Bearer ${token}` };
   const out: Record<string, unknown> = {};
 
-  async function rawGet(k: string) {
-    const r = await fetch(`${url}/get/${encodeURIComponent(k)}`, { headers: H });
+  // build a ~171KB JSON payload like the deals array
+  const big = JSON.stringify(Array.from({ length: 150 }, (_, i) => ({
+    id: `auction-${i}`, title: `Test product title number ${i} with some descriptive words to add bulk`,
+    retail: 500 + i, bid: 42 + i, profit: 458, margin: 0.91, tier: "HOT",
+    extra: "x".repeat(800),
+  })));
+  out.bigLen = big.length;
+
+  const key = "buywonderbot:bigtest";
+  const setUrl = `${url}/set/${encodeURIComponent(key)}/${encodeURIComponent(big)}/EX/120`;
+  out.setUrlLen = setUrl.length;
+  try {
+    const r = await fetch(setUrl, { method: "POST", headers: H });
+    out.setStatus = r.status;
+    out.setBody = (await r.text()).slice(0, 120);
+  } catch (e) {
+    out.setError = (e as Error).message?.slice(0, 200);
+  }
+  try {
+    const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, { headers: H });
     const t = await r.text();
-    return { status: r.status, len: t.length, head: t.slice(0, 300) };
+    out.getStatus = r.status;
+    out.getLen = t.length;
+    out.getHead = t.slice(0, 120);
+  } catch (e) {
+    out.getError = (e as Error).message?.slice(0, 200);
   }
-
-  out.meta = await rawGet("buywonderbot:meta");
-  out.deals = await rawGet("buywonderbot:deals");
-  out.rt = await rawGet("buywonderbot:rt");
-
-  // check key existence/type via EXISTS
-  for (const k of ["buywonderbot:meta", "buywonderbot:deals"]) {
-    const r = await fetch(`${url}/exists/${encodeURIComponent(k)}`, { headers: H });
-    out[`exists_${k.split(":")[1]}`] = (await r.text()).slice(0, 100);
-  }
-  // TTLs
-  for (const k of ["buywonderbot:meta", "buywonderbot:deals"]) {
-    const r = await fetch(`${url}/ttl/${encodeURIComponent(k)}`, { headers: H });
-    out[`ttl_${k.split(":")[1]}`] = (await r.text()).slice(0, 100);
+  try {
+    const r = await fetch(`${url}/exists/${encodeURIComponent(key)}`, { headers: H });
+    out.exists = (await r.text()).slice(0, 60);
+  } catch (e) {
+    out.existsError = (e as Error).message?.slice(0, 100);
   }
   return NextResponse.json(out);
 }
