@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { kvSet, kvGet } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-// TEMPORARY: large-value SET/GET test. Delete after diagnosing.
+// TEMPORARY: DEL-then-SET test on the stubborn keys. Delete after diagnosing.
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
@@ -13,38 +14,21 @@ export async function GET(req: Request) {
   const H = { Authorization: `Bearer ${token}` };
   const out: Record<string, unknown> = {};
 
-  // build a ~171KB JSON payload like the deals array
-  const big = JSON.stringify(Array.from({ length: 150 }, (_, i) => ({
-    id: `auction-${i}`, title: `Test product title number ${i} with some descriptive words to add bulk`,
-    retail: 500 + i, bid: 42 + i, profit: 458, margin: 0.91, tier: "HOT",
-    extra: "x".repeat(800),
-  })));
-  out.bigLen = big.length;
-
-  const key = "buywonderbot:bigtest";
-  const setUrl = `${url}/set/${encodeURIComponent(key)}/${encodeURIComponent(big)}/EX/120`;
-  out.setUrlLen = setUrl.length;
-  try {
-    const r = await fetch(setUrl, { method: "POST", headers: H });
-    out.setStatus = r.status;
-    out.setBody = (await r.text()).slice(0, 120);
-  } catch (e) {
-    out.setError = (e as Error).message?.slice(0, 200);
+  for (const k of ["buywonderbot:meta", "buywonderbot:deals"]) {
+    try {
+      const del = await fetch(`${url}/del/${encodeURIComponent(k)}`, { headers: H });
+      out[`del_${k.split(":")[1]}`] = `${del.status} ${(await del.text()).slice(0, 60)}`;
+    } catch (e) {
+      out[`del_${k.split(":")[1]}_err`] = (e as Error).message?.slice(0, 100);
+    }
   }
+  // now set fresh via the real kvSet
   try {
-    const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, { headers: H });
-    const t = await r.text();
-    out.getStatus = r.status;
-    out.getLen = t.length;
-    out.getHead = t.slice(0, 120);
+    await kvSet("buywonderbot:meta", { mode: "deltest", at: new Date().toISOString() }, 86400);
+    out.set_meta = "ok";
+    out.got_meta = await kvGet("buywonderbot:meta");
   } catch (e) {
-    out.getError = (e as Error).message?.slice(0, 200);
-  }
-  try {
-    const r = await fetch(`${url}/exists/${encodeURIComponent(key)}`, { headers: H });
-    out.exists = (await r.text()).slice(0, 60);
-  } catch (e) {
-    out.existsError = (e as Error).message?.slice(0, 100);
+    out.set_meta_err = (e as Error).message?.slice(0, 200);
   }
   return NextResponse.json(out);
 }
