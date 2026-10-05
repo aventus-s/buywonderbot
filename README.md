@@ -75,3 +75,5 @@ model-number match (+50) ≫ brand match (+20) + token overlap. Comp price = med
 of the 5 best-matching sold listings. Low-confidence matches are **excluded** from
 deals, and every deal card has a "verify product" expander showing the exact eBay
 sold listings (title, price, date, link) behind its comp price — one glance to confirm.
+
+<!-- deploy trigger: test-mode dashboard wired 2026-10-05 -->
