@@ -14,6 +14,7 @@ export interface Deal extends AuctionRecord {
   hoursLeft: number | null;
   dealUrl: string;
   scoredAt: string;
+  mode: "margin" | "retail";
 }
 
 export interface ScoreConfig {
@@ -69,6 +70,7 @@ export function scoreDeal(
     hoursLeft: hrs == null ? null : Math.round(hrs * 100) / 100,
     dealUrl: dealUrl(rec),
     scoredAt: new Date(now).toISOString(),
+    mode: "margin",
   };
 }
 
