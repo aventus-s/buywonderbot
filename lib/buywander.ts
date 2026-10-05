@@ -70,7 +70,16 @@ async function postJson(path: string, body: unknown, retries = 4): Promise<any> 
   throw lastErr;
 }
 
+function unwrap(raw: any): any {
+  // API sometimes wraps auctions as { type: "Auction", auction: {...} }
+  if (raw && typeof raw === "object" && raw.auction && typeof raw.auction === "object") {
+    return raw.auction;
+  }
+  return raw;
+}
+
 function flatten(raw: any): AuctionRecord {
+  raw = unwrap(raw);
   const item = raw.item ?? {};
   const wb = raw.winningBid ?? {};
   const loc = raw.storeLocation ?? {};
@@ -94,17 +103,17 @@ function flatten(raw: any): AuctionRecord {
   };
 }
 
-/** Fetch ALL active auctions for the given location ids (follows searchAfter cursors). */
+/** Fetch ALL active auctions for the given location ids (follows cursor pagination). */
 export async function fetchAllAuctions(locationIds: string[]): Promise<AuctionRecord[]> {
   const out: AuctionRecord[] = [];
   const seen = new Set<string>();
-  let searchAfter: unknown = null;
+  let cursor: unknown = null;
   for (;;) {
     const page = await postJson(SEARCH_PATH, {
       pageNumber: 1,
       pageSize: 100,
       isPaginated: false,
-      searchAfter,
+      searchAfter: null,
       conditions: null,
       itemTypes: null,
       categories: null,
@@ -121,18 +130,25 @@ export async function fetchAllAuctions(locationIds: string[]): Promise<AuctionRe
       additionalCategories: null,
       filter: null,
       isFallback: null,
+      cursor,
     });
     const items: any[] = page.items ?? [];
     let fresh = 0;
     for (const it of items) {
-      if (it?.id && !seen.has(it.id)) {
-        seen.add(it.id);
+      const id = unwrap(it)?.id;
+      if (id && !seen.has(id)) {
+        seen.add(id);
         out.push(flatten(it));
         fresh++;
       }
     }
-    if (!page.hasNextPage || items.length === 0 || fresh === 0 || !page.nextSearchAfter) break;
-    searchAfter = page.nextSearchAfter;
+    const cur = page.cursor ?? {};
+    const newAuctions = cur.auctions;
+    const total = cur.auctionsTotal ?? page.totalCount;
+    if (items.length === 0 || !newAuctions || fresh === 0) break;
+    if (total && seen.size >= total) break;
+    if (JSON.stringify(newAuctions) === JSON.stringify((cursor as any)?.auctions)) break;
+    cursor = page.cursor; // pass the full cursor object back
   }
   return out;
 }
