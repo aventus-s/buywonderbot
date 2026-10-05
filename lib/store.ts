@@ -34,11 +34,12 @@ export async function kvGet<T>(key: string): Promise<T | null> {
 
 export async function kvSet(key: string, value: unknown, exSeconds?: number): Promise<void> {
   const raw = typeof value === "string" ? value : JSON.stringify(value);
-  // Upstash REST: POST /set/<key> with JSON array body [value, "EX", seconds]
-  const res = await kvFetch(`/set/${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(exSeconds ? [raw, "EX", exSeconds] : [raw]),
-  });
+  // NOTE: this Upstash endpoint only accepts command args in the URL path —
+  // a POST JSON-array body is stored verbatim instead of being parsed.
+  const parts = [encodeURIComponent(key), encodeURIComponent(raw)];
+  if (exSeconds) parts.push("EX", String(Math.floor(exSeconds)));
+  const res = await kvFetch(`/set/${parts.join("/")}`, { method: "POST" });
   if (!res.ok) throw new Error(`KV SET failed: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data || data.result !== "OK") throw new Error(`KV SET unexpected response: ${JSON.stringify(data)?.slice(0, 120)}`);
 }
