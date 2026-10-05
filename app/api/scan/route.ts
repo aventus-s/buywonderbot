@@ -3,6 +3,7 @@ import { fetchAllAuctions, ALL_LOCATIONS } from "@/lib/buywander";
 import { findSoldListings, ebayConfigured, ebayCredsFromEnv } from "@/lib/ebay";
 import { buildQuery, matchComps } from "@/lib/match";
 import { scoreDeal, rankDeals, scoreConfigFromEnv, Deal } from "@/lib/scoring";
+import { scoreRetailDeal } from "@/lib/retail";
 import { kvGet, kvSet, kvConfigured } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ function locations(): Record<string, string> {
       if (parsed && typeof parsed === "object") return parsed;
     }
   } catch { /* fall through to default */ }
-  return { Chicago: ALL_LOCATIONS.Chicago };
+  return { Minneapolis: ALL_LOCATIONS.Minneapolis };
 }
 
 function authorized(req: Request): boolean {
@@ -54,18 +55,38 @@ export async function GET(req: Request) {
   if (!kvConfigured()) {
     return NextResponse.json({ ok: false, error: "KV not configured (KV_REST_API_URL / KV_REST_API_TOKEN)" }, { status: 500 });
   }
-  if (!ebayConfigured()) {
-    return NextResponse.json({ ok: false, error: "EBAY_CLIENT_ID / EBAY_CLIENT_SECRET are not set — margin scoring needs eBay sold comps" }, { status: 500 });
-  }
 
   const t0 = Date.now();
+  const locs = locations();
+  const auctions = await fetchAllAuctions(Object.values(locs));
+
+  // ---- TEST MODE (no eBay key yet): rank by retail discount ----
+  if (!ebayConfigured()) {
+    const now = Date.now();
+    const deals = auctions
+      .map((rec) => scoreRetailDeal(rec, now))
+      .filter((d): d is Deal => !!d)
+      .sort((a, b) => b.profit - a.profit) // biggest dollar savings first
+      .slice(0, 150);
+    await kvSet(DEALS_KEY, deals, 24 * 3600);
+    const meta = {
+      mode: "retail-test",
+      scannedAt: new Date().toISOString(),
+      locations: Object.keys(locs),
+      auctionsScanned: auctions.length,
+      hot: deals.filter((d) => d.tier === "HOT").length,
+      watch: deals.filter((d) => d.tier === "WATCH").length,
+      elapsedMs: Date.now() - t0,
+    };
+    await kvSet(META_KEY, meta, 24 * 3600);
+    return NextResponse.json({ ok: true, ...meta });
+  }
+
+  // ---- MARGIN MODE (eBay sold comps) ----
   const cfg = scoreConfigFromEnv();
   const matchMin = Number(process.env.MATCH_CONFIDENCE_MIN ?? 40);
   const maxLookups = Number(process.env.MAX_EBAY_LOOKUPS_PER_SCAN ?? 120);
-  const locs = locations();
   const creds = ebayCredsFromEnv()!;
-
-  const auctions = await fetchAllAuctions(Object.values(locs));
 
   // Prefilter: profit>=100 & margin>=50% needs comp>=200; retail<150 almost never qualifies.
   const candidates = auctions
@@ -101,6 +122,7 @@ export async function GET(req: Request) {
   const ranked = rankDeals(deals).slice(0, 200);
   await kvSet(DEALS_KEY, ranked, 24 * 3600);
   const meta = {
+    mode: "margin",
     scannedAt: new Date().toISOString(),
     locations: Object.keys(locs),
     auctionsScanned: auctions.length,
