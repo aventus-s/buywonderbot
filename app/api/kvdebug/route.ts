@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// TEMPORARY debug: raw Upstash REST roundtrip. Delete after diagnosing.
+// TEMPORARY debug: which Upstash REST SET form works. Delete after diagnosing.
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
@@ -10,33 +10,42 @@ export async function GET(req: Request) {
   }
   const url = (process.env.KV_REST_API_URL ?? "").replace(/\/$/, "");
   const token = process.env.KV_REST_API_TOKEN ?? "";
-  const out: Record<string, unknown> = {
-    urlHost: url ? new URL(url).host : null,
-    urlLen: url.length,
-    tokenLen: token.length,
-    tokenPrefix: token.slice(0, 6),
-  };
-  const key = "buywonderbot:kvdebug";
-  const val = JSON.stringify({ t: Date.now(), hello: "world" });
-  try {
-    const setRes = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify([val, "EX", 120]),
-    });
-    out.setStatus = setRes.status;
-    out.setBody = (await setRes.text()).slice(0, 500);
-  } catch (e) {
-    out.setError = (e as Error).message;
+  const H = { Authorization: `Bearer ${token}` };
+  const out: Record<string, unknown> = {};
+  const rnd = Math.floor(Math.random() * 1e6);
+
+  async function get(k: string) {
+    const r = await fetch(`${url}/get/${encodeURIComponent(k)}`, { headers: H });
+    return (await r.text()).slice(0, 200);
   }
-  try {
-    const getRes = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    out.getStatus = getRes.status;
-    out.getBody = (await getRes.text()).slice(0, 500);
-  } catch (e) {
-    out.getError = (e as Error).message;
-  }
+
+  // Variant A: POST JSON-array body (documented form)
+  const ka = `dbg:a:${rnd}`;
+  let r = await fetch(`${url}/set/${encodeURIComponent(ka)}`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify(["valueA"]),
+  });
+  out.a_set = `${r.status} ${(await r.text()).slice(0, 80)}`;
+  out.a_get = await get(ka);
+
+  // Variant B: args in URL path, no body
+  const kb = `dbg:b:${rnd}`;
+  r = await fetch(`${url}/set/${encodeURIComponent(kb)}/${encodeURIComponent("valueB")}`, {
+    method: "POST",
+    headers: H,
+  });
+  out.b_set = `${r.status} ${(await r.text()).slice(0, 80)}`;
+  out.b_get = await get(kb);
+
+  // Variant C: path args with EX
+  const kc = `dbg:c:${rnd}`;
+  r = await fetch(`${url}/set/${encodeURIComponent(kc)}/${encodeURIComponent("valueC")}/EX/120`, {
+    method: "POST",
+    headers: H,
+  });
+  out.c_set = `${r.status} ${(await r.text()).slice(0, 80)}`;
+  out.c_get = await get(kc);
+
   return NextResponse.json(out);
 }
