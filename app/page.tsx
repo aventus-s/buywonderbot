@@ -13,11 +13,12 @@ interface Deal {
   compPrice: number; profit: number; margin: number; tier: "HOT" | "WATCH";
   confidence: "high" | "medium" | "low"; ebayQuery: string;
   evidence: Evidence[]; hoursLeft: number | null; dealUrl: string;
+  mode?: "margin" | "retail";
 }
 interface ApiResp {
   ok: boolean;
   setup: { kv: boolean; ebay: boolean; cronSecret: boolean };
-  meta: { scannedAt: string; locations: string[]; auctionsScanned: number; ebayCalls: number } | null;
+  meta: { scannedAt: string; locations: string[]; auctionsScanned: number; ebayCalls: number; mode?: string } | null;
   deals: Deal[]; closingSoon: Deal[];
   counts: { hot: number; watch: number; closingSoon: number };
 }
@@ -79,6 +80,7 @@ export default function Dashboard() {
   );
   const hot = deals.filter((d) => d.tier === "HOT");
   const watch = deals.filter((d) => d.tier === "WATCH");
+  const testMode = data?.meta?.mode === "retail-test";
 
   return (
     <main style={S.main}>
@@ -100,13 +102,19 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {data && (!data.setup.kv || !data.setup.ebay) && (
+      {data && (!data.setup.kv || (!data.setup.ebay && !testMode)) && (
         <div style={S.setup}>
           <b>Setup needed:</b>
           {!data.setup.kv && <> add <code>KV_REST_API_URL</code> + <code>KV_REST_API_TOKEN</code></>}
-          {!data.setup.kv && !data.setup.ebay && <> and </>}
-          {!data.setup.ebay && <> add <code>EBAY_CLIENT_ID</code> + <code>EBAY_CLIENT_SECRET</code> (free at developer.ebay.com)</>}
+          {!data.setup.kv && !data.setup.ebay && !testMode && <> and </>}
+          {!data.setup.ebay && !testMode && <> add <code>EBAY_CLIENT_ID</code> + <code>EBAY_CLIENT_SECRET</code> (free at developer.ebay.com)</>}
           . See README for steps, then trigger a scan.
+        </div>
+      )}
+
+      {testMode && (
+        <div style={S.testMode}>
+          🧪 <b>TEST MODE</b> — ranked by discount vs Buywander retail. eBay sold-price verification switches on once the eBay key lands.
         </div>
       )}
 
@@ -122,7 +130,7 @@ export default function Dashboard() {
 
       <section>
         <h2 style={S.h2}>🔥 HOT deals <span style={S.count}>{hot.length}</span></h2>
-        <div style={S.note}>Margin ≥ 50% vs eBay sold price · profit ≥ $100 · product verified</div>
+        <div style={S.note}>{testMode ? "Biggest savings vs retail · ranked by dollars saved" : "Margin ≥ 50% vs eBay sold price · profit ≥ $100 · product verified"}</div>
         <div style={S.grid}>{hot.map((d) => <Card key={d.auctionId} d={d} now={now}
           verify={showVerify === d.auctionId} onVerify={() => setShowVerify(showVerify === d.auctionId ? null : d.auctionId)} />)}</div>
         {hot.length === 0 && <div style={S.empty}>No HOT deals right now. The radar is watching.</div>}
@@ -130,7 +138,7 @@ export default function Dashboard() {
 
       <section>
         <h2 style={S.h2}>👀 Watch <span style={S.count}>{watch.length}</span></h2>
-        <div style={S.note}>Margin 35–50% · profit ≥ $100 · product verified</div>
+        <div style={S.note}>{testMode ? "75–90% off retail · still big savings" : "Margin 35–50% · profit ≥ $100 · product verified"}</div>
         <div style={S.grid}>{watch.map((d) => <Card key={d.auctionId} d={d} now={now}
           verify={showVerify === d.auctionId} onVerify={() => setShowVerify(showVerify === d.auctionId ? null : d.auctionId)} />)}</div>
       </section>
@@ -154,7 +162,7 @@ function Card({ d, now, closing, verify, onVerify }: {
         <div style={S.meta}>{d.location} · {d.condition} · conf: {d.confidence}</div>
         <div style={S.prow}>
           <span>bid <b style={S.bid}>{money(d.bid)}</b></span>
-          <span>eBay <b>{money(d.compPrice)}</b></span>
+          <span>{d.mode === "retail" ? "retail" : "eBay"} <b>{money(d.compPrice)}</b></span>
           <span style={S.profit}>+{money(d.profit)}</span>
         </div>
         <div style={S.barWrap}><div style={{ ...S.bar, width: `${Math.min(100, pct)}%` }} /></div>
@@ -190,6 +198,7 @@ const S: Record<string, React.CSSProperties> = {
   input: { background: "#171b22", border: "1px solid #262c38", color: "#fff", borderRadius: 8, padding: "8px 12px" },
   btn: { background: "#1d2532", border: "1px solid #2c3a52", color: "#cfe0ff", borderRadius: 8, padding: "8px 12px", cursor: "pointer" },
   setup: { background: "#2a1f10", border: "1px solid #7a4a1e", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: ".9rem" },
+  testMode: { background: "#141b2e", border: "1px solid #8052ff", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: ".9rem" },
   closing: { background: "linear-gradient(180deg,#2b1210,#160b0b)", border: "2px solid #ff5a48", borderRadius: 14, padding: 16, marginBottom: 24, animation: "pulse 2s infinite" },
   h2: { margin: "18px 0 4px", fontSize: "1.15rem" },
   count: { background: "#222b3d", borderRadius: 12, padding: "2px 10px", fontSize: ".8rem", color: "#9fb6dd" },
