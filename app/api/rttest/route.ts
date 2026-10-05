@@ -10,8 +10,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   const out: Record<string, unknown> = {};
-  const key = "buywonderbot:rt";
-  const val = { t: Date.now(), msg: "roundtrip-test" };
+  const key = "buywonderbot:meta";
+  const val = { mode: "rttest", scannedAt: new Date().toISOString(), probe: true };
   try {
     await kvSet(key, val, 120);
     out.set = "ok";
