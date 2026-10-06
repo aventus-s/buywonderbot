@@ -68,7 +68,7 @@ export async function GET(req: Request) {
       .filter((d): d is Deal => !!d)
       .sort((a, b) => b.profit - a.profit) // biggest dollar savings first
       .slice(0, 150);
-    await kvSet(DEALS_KEY, deals, 24 * 3600);
+    await kvSet(DEALS_KEY, deals, 3600);
     const meta = {
       mode: "retail-test",
       scannedAt: new Date().toISOString(),
@@ -78,7 +78,7 @@ export async function GET(req: Request) {
       watch: deals.filter((d) => d.tier === "WATCH").length,
       elapsedMs: Date.now() - t0,
     };
-    await kvSet(META_KEY, meta, 24 * 3600);
+    await kvSet(META_KEY, meta, 3600);
     return NextResponse.json({ ok: true, ...meta });
   }
 
@@ -120,7 +120,7 @@ export async function GET(req: Request) {
   });
 
   const ranked = rankDeals(deals).slice(0, 200);
-  await kvSet(DEALS_KEY, ranked, 24 * 3600);
+  await kvSet(DEALS_KEY, ranked, 3600);
   const meta = {
     mode: "margin",
     scannedAt: new Date().toISOString(),
@@ -133,7 +133,7 @@ export async function GET(req: Request) {
     watch: ranked.filter((d) => d.tier === "WATCH").length,
     elapsedMs: Date.now() - t0,
   };
-  await kvSet(META_KEY, meta, 24 * 3600);
+  await kvSet(META_KEY, meta, 3600);
 
   return NextResponse.json({ ok: true, ...meta });
 }
