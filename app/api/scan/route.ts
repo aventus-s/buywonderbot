@@ -1,3 +1,4 @@
+// rebuild trigger
 import { NextResponse } from "next/server";
 import { fetchAllAuctions, ALL_LOCATIONS, AuctionRecord } from "@/lib/buywander";
 import { findSoldListings, ebayConfigured, ebayCredsFromEnv, probeEbayCreds } from "@/lib/ebay";
