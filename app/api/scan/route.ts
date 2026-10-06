@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { fetchAllAuctions, ALL_LOCATIONS } from "@/lib/buywander";
-import { findSoldListings, ebayConfigured, ebayCredsFromEnv } from "@/lib/ebay";
+import { fetchAllAuctions, ALL_LOCATIONS, AuctionRecord } from "@/lib/buywander";
+import { findSoldListings, ebayConfigured, ebayCredsFromEnv, probeEbayCreds } from "@/lib/ebay";
 import { buildQuery, matchComps } from "@/lib/match";
 import { scoreDeal, rankDeals, scoreConfigFromEnv, Deal } from "@/lib/scoring";
 import { scoreRetailDeal } from "@/lib/retail";
@@ -44,6 +44,38 @@ async function pool<T, R>(items: T[], size: number, fn: (t: T) => Promise<R>): P
   return out;
 }
 
+/** Retail-discount test scoring: rank by discount vs Buywander retail.
+ *  Used when no eBay key exists AND when eBay auth fails — a broken keyset
+ *  must never empty the dashboard. `ebayError` (when present) is shown in
+ *  the dashboard's test-mode banner. */
+async function runRetailTest(
+  auctions: AuctionRecord[],
+  locs: Record<string, string>,
+  t0: number,
+  ebayError?: string,
+) {
+  const now = Date.now();
+  const deals = auctions
+    .map((rec) => scoreRetailDeal(rec, now))
+    .filter((d): d is Deal => !!d)
+    .sort((a, b) => b.profit - a.profit) // biggest dollar savings first
+    .slice(0, 150);
+  await kvSet(DEALS_KEY, deals, 3600);
+  const meta = {
+    mode: "retail-test",
+    ...(ebayError ? { ebayError } : {}),
+    scannedAt: new Date().toISOString(),
+    locations: Object.keys(locs),
+    auctionsScanned: auctions.length,
+    ebayCalls: 0,
+    hot: deals.filter((d) => d.tier === "HOT").length,
+    watch: deals.filter((d) => d.tier === "WATCH").length,
+    elapsedMs: Date.now() - t0,
+  };
+  await kvSet(META_KEY, meta, 3600);
+  return NextResponse.json({ ok: true, ...meta });
+}
+
 export async function GET(req: Request) {
   if (!authorized(req)) {
     const msg = process.env.CRON_SECRET
@@ -60,26 +92,23 @@ export async function GET(req: Request) {
   const locs = locations();
   const auctions = await fetchAllAuctions(Object.values(locs));
 
-  // ---- TEST MODE (no eBay key yet): rank by retail discount ----
+  // ---- TEST MODE (no eBay key, or eBay auth broken): retail discount ----
+  // Env vars set does NOT mean the creds work: a bad Cert ID (HTTP 401) or
+  // eBay's limited-release gate (HTTP 403) would make every margin lookup
+  // fail and empty the dashboard. Pre-flight one OAuth token and fall back
+  // to test scoring so the dashboard keeps showing deals.
   if (!ebayConfigured()) {
-    const now = Date.now();
-    const deals = auctions
-      .map((rec) => scoreRetailDeal(rec, now))
-      .filter((d): d is Deal => !!d)
-      .sort((a, b) => b.profit - a.profit) // biggest dollar savings first
-      .slice(0, 150);
-    await kvSet(DEALS_KEY, deals, 3600);
-    const meta = {
-      mode: "retail-test",
-      scannedAt: new Date().toISOString(),
-      locations: Object.keys(locs),
-      auctionsScanned: auctions.length,
-      hot: deals.filter((d) => d.tier === "HOT").length,
-      watch: deals.filter((d) => d.tier === "WATCH").length,
-      elapsedMs: Date.now() - t0,
-    };
-    await kvSet(META_KEY, meta, 3600);
-    return NextResponse.json({ ok: true, ...meta });
+    return await runRetailTest(auctions, locs, t0);
+  }
+  const ebayProbe = await probeEbayCreds(ebayCredsFromEnv()!);
+  if (!ebayProbe.ok) {
+    const err =
+      ebayProbe.status === 401
+        ? "eBay rejected the keyset (HTTP 401) — the Cert ID (Client Secret) doesn't match the App ID (Client ID). Regenerate the Cert ID at developer.ebay.com and set it in Vercel."
+        : ebayProbe.status === 403
+          ? "eBay denied access (HTTP 403) — the Marketplace Insights API needs approval. Request access for this app in the eBay developer dashboard."
+          : `eBay OAuth failed (HTTP ${ebayProbe.status ?? "n/a"}): ${ebayProbe.message}`;
+    return await runRetailTest(auctions, locs, t0, err);
   }
 
   // ---- MARGIN MODE (eBay sold comps) ----
@@ -118,6 +147,17 @@ export async function GET(req: Request) {
       console.error(`scan: ${rec.auctionId} failed:`, (e as Error).message);
     }
   });
+
+  // If every eBay lookup failed (e.g. scope not granted), don't leave the
+  // dashboard empty — fall back to retail test scoring.
+  if (ebayCalls === 0 && candidates.length > 0) {
+    return await runRetailTest(
+      auctions,
+      locs,
+      t0,
+      "eBay sold-price lookups failed (the app's keyset lacks the Marketplace Insights scope). Showing retail-discount test mode instead.",
+    );
+  }
 
   const ranked = rankDeals(deals).slice(0, 200);
   await kvSet(DEALS_KEY, ranked, 3600);
